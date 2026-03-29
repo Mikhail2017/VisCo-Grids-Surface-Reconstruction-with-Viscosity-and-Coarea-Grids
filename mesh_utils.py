@@ -159,6 +159,132 @@ def save_pointcloud_to_xyz(
             f.write("\n")
 
 
+def invert_face_normals(faces: np.ndarray) -> np.ndarray:
+    """
+    Invert all face normals by flipping triangle orientation.
+    
+    Args:
+        faces: Face indices of shape (M, 3)
+        
+    Returns:
+        faces: Faces with inverted normals (swapped vertex order)
+    """
+    # Flip each triangle by swapping two vertices
+    return faces[:, [0, 2, 1]]
+
+
+def fix_triangle_orientations(
+    vertices: np.ndarray,
+    faces: np.ndarray
+) -> np.ndarray:
+    """
+    Fix triangle orientations to be locally consistent.
+    Ensures neighboring triangles have aligned normals.
+    
+    Uses BFS to propagate consistent orientations through the mesh.
+    
+    Args:
+        vertices: Vertex positions of shape (N, 3)
+        faces: Face indices of shape (M, 3)
+        
+    Returns:
+        faces: Faces with consistent orientations
+    """
+    if len(faces) == 0:
+        return faces
+    
+    faces = faces.copy()
+    num_faces = len(faces)
+    
+    # Build edge-face adjacency: edge -> list of (face_idx, edge_position_in_face)
+    edge_to_faces = {}
+    for face_idx, face in enumerate(faces):
+        for i in range(3):
+            v1, v2 = face[i], face[(i + 1) % 3]
+            # Use canonical edge representation (smaller index first)
+            edge = tuple(sorted([int(v1), int(v2)]))
+            if edge not in edge_to_faces:
+                edge_to_faces[edge] = []
+            edge_to_faces[edge].append((face_idx, i))
+    
+    # Compute face normals
+    def compute_face_normal(face):
+        v0, v1, v2 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
+        edge1 = v1 - v0
+        edge2 = v2 - v0
+        normal = np.cross(edge1, edge2)
+        norm = np.linalg.norm(normal)
+        if norm > 1e-8:
+            return normal / norm
+        return np.array([0.0, 0.0, 1.0])  # Default normal for degenerate faces
+    
+    face_normals = np.array([compute_face_normal(face) for face in faces])
+    
+    # Track which faces have been processed and their orientation
+    processed = np.zeros(num_faces, dtype=bool)
+    face_flipped = np.zeros(num_faces, dtype=bool)
+    
+    # BFS to propagate consistent orientations
+    from collections import deque
+    
+    # Process all connected components
+    while not processed.all():
+        # Find first unprocessed face
+        start_face = np.where(~processed)[0][0]
+        queue = deque([start_face])
+        processed[start_face] = True
+        
+        while queue:
+            current_face_idx = queue.popleft()
+            current_face = faces[current_face_idx]
+            current_normal = face_normals[current_face_idx]
+            if face_flipped[current_face_idx]:
+                current_normal = -current_normal
+            
+            # Check all edges of current face
+            for i in range(3):
+                v1, v2 = int(current_face[i]), int(current_face[(i + 1) % 3])
+                edge = tuple(sorted([v1, v2]))
+                
+                if edge in edge_to_faces:
+                    # Find neighboring faces sharing this edge
+                    for neighbor_face_idx, neighbor_edge_pos in edge_to_faces[edge]:
+                        if neighbor_face_idx == current_face_idx:
+                            continue
+                        
+                        if not processed[neighbor_face_idx]:
+                            neighbor_face = faces[neighbor_face_idx]
+                            
+                            # Check edge direction in neighbor face
+                            nv1 = int(neighbor_face[neighbor_edge_pos])
+                            nv2 = int(neighbor_face[(neighbor_edge_pos + 1) % 3])
+                            edge_reversed = (nv1 == v2 and nv2 == v1)
+                            
+                            # Get neighbor normal
+                            neighbor_normal = face_normals[neighbor_face_idx]
+                            
+                            # For consistent orientation:
+                            # - If edge is in same direction, normals should point in same direction
+                            # - If edge is reversed, normals should point in opposite directions
+                            # But we want normals to be consistent, so we check the dot product
+                            # and flip if needed
+                            
+                            # Compute dot product of normals
+                            dot_product = np.dot(current_normal, neighbor_normal)
+                            
+                            # If normals are pointing in opposite directions, flip the neighbor
+                            if dot_product < -0.1:  # Use threshold to avoid numerical issues
+                                # Flip the neighbor face (swap two vertices)
+                                faces[neighbor_face_idx] = faces[neighbor_face_idx][[0, 2, 1]]
+                                face_flipped[neighbor_face_idx] = True
+                                face_normals[neighbor_face_idx] = -face_normals[neighbor_face_idx]
+                            
+                            processed[neighbor_face_idx] = True
+                            queue.append(neighbor_face_idx)
+    
+    return faces
+
+
 def compute_vertex_normals(
     vertices: np.ndarray,
     faces: np.ndarray
@@ -173,7 +299,7 @@ def compute_vertex_normals(
     Returns:
         normals: Vertex normals of shape (N, 3)
     """
-    normals = np.zeros_like(vertices)
+    normals = np.zeros((len(vertices), 3), dtype=np.float64)
     
     # Compute face normals
     for face in faces:

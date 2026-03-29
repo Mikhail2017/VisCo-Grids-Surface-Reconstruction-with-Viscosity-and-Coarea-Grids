@@ -21,19 +21,54 @@ This document lists recommended datasets for experimenting with VisCo Grids surf
 
 **Usage**:
 ```python
-from datasets import load_point_cloud_from_ply, normalize_point_cloud
+from datasets import load_stanford_bunny, normalize_point_cloud
 
-# Load point cloud
+# Load point cloud (automatically finds PLY file in data/bunny/)
+points, normals = load_stanford_bunny(data_dir="data")
+
+# Or load directly from PLY file
+from datasets import load_point_cloud_from_ply
 points, normals = load_point_cloud_from_ply("data/bunny/bunny.ply")
 
 # Normalize to [0, 1]^3
 points_normalized, center, scale = normalize_point_cloud(points)
 ```
 
-**Download**: 
-- Direct download links available on the website
-- No registration required
-- Free for research use
+**Download Instructions**: 
+1. Download `bunny.tar.gz` from: http://graphics.stanford.edu/data/3Dscanrep/
+2. Extract the archive:
+   ```bash
+   tar -xzf bunny.tar.gz
+   ```
+3. Place the extracted `bunny/` folder in your `data/` directory
+
+**Archive Structure**:
+The extracted archive has the following structure:
+```
+bunny/
+├── data/                    # Individual scan files
+│   ├── bun000.ply          # Scan from angle 0°
+│   ├── bun045.ply          # Scan from angle 45°
+│   ├── bun090.ply          # Scan from angle 90°
+│   ├── bun180.ply          # Scan from angle 180°
+│   ├── bun270.ply          # Scan from angle 270°
+│   ├── bun315.ply          # Scan from angle 315°
+│   ├── chin.ply            # Additional scan
+│   ├── ear_back.ply        # Additional scan
+│   ├── top2.ply, top3.ply  # Top view scans
+│   └── bun.conf            # Configuration file
+└── reconstruction/          # Merged reconstructions (preferred)
+    ├── bun_zipper.ply      # Main zippered reconstruction (~105K points)
+    ├── bun_zipper_res2.ply # Lower resolution decimation
+    ├── bun_zipper_res3.ply # Medium resolution decimation
+    └── bun_zipper_res4.ply # Higher resolution decimation
+```
+
+**Note**: The `load_stanford_bunny()` function automatically:
+- Prefers files in `reconstruction/` folder (final merged meshes)
+- Specifically looks for `bun_zipper.ply` first (the main reconstruction)
+- Falls back to other PLY files if needed
+- Searches recursively if files aren't in expected locations
 
 **Best For**: Testing basic reconstruction, comparing with paper results
 

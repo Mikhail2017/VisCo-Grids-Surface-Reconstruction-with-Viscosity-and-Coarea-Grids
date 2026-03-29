@@ -26,12 +26,18 @@ def example_stanford_bunny():
     
     # Load point cloud
     try:
-        points, normals = load_point_cloud_from_ply("data/bunny/bunny.ply")
+        from datasets import load_stanford_bunny
+        points, normals = load_stanford_bunny(data_dir="data")
         print(f"Loaded {len(points)} points")
-    except FileNotFoundError:
-        print("Stanford Bunny not found. Please download from:")
-        print("http://graphics.stanford.edu/data/3Dscanrep/")
-        print("\nPlace the bunny.ply file in data/bunny/")
+    except FileNotFoundError as e:
+        print("Stanford Bunny not found.")
+        print(str(e))
+        print("\nInstructions:")
+        print("1. Download bunny.tar.gz from: http://graphics.stanford.edu/data/3Dscanrep/")
+        print("2. Extract the archive:")
+        print("   tar -xzf bunny.tar.gz")
+        print("3. Place the extracted bunny/ folder in data/ directory")
+        print("   (or update the data_dir parameter)")
         return
     
     # Normalize

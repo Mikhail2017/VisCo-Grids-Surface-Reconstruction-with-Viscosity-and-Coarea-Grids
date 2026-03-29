@@ -455,15 +455,17 @@ class VisCoGrids(nn.Module):
         Returns:
             PDF values
         """
-        return (1.0 / (2.0 * self.beta)) * torch.exp(-torch.abs(s) / self.beta)
+        # Clamp to avoid numerical overflow/underflow
+        abs_s = torch.clamp(torch.abs(s), max=10.0 * self.beta)
+        return (1.0 / (2.0 * self.beta)) * torch.exp(-abs_s / self.beta)
     
     def coarea_loss(self, grid: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Compute coarea loss to minimize surface area.
         
-        L_coarea = (1/N) * sum_I [ Φ_β(-f(w_I)) * ||∇f(w_I)|| ]
+        L_coarea = (1/N) * sum_I [ Φ_β(-f(p_I)) * ||∇f(p_I)|| ]
         
-        where w_I are voxel centers.
+        where p_I are grid nodes. Uses finite differences for consistency.
         
         Args:
             grid: Optional grid to use (defaults to self.sdf_grid)
@@ -474,22 +476,38 @@ class VisCoGrids(nn.Module):
         if grid is None:
             grid = self.sdf_grid
         
-        # Get active voxel centers
-        active_indices = torch.nonzero(self.active_mask, as_tuple=False)
-        if len(active_indices) == 0:
+        # Use finite differences for consistency with viscosity loss
+        # This is more efficient and numerically stable than autograd
+        gradients, _ = self.compute_finite_differences(grid)
+        grad_norms = torch.norm(gradients, dim=-1)
+        
+        # Apply active mask to only consider active voxels
+        if self.active_mask is not None:
+            active_grad_norms = grad_norms[self.active_mask]
+            active_sdf_values = grid[self.active_mask]
+        else:
+            active_grad_norms = grad_norms.flatten()
+            active_sdf_values = grid.flatten()
+        
+        if len(active_grad_norms) == 0:
             return torch.tensor(0.0, device=self.device)
         
-        # Voxel centers in [0, 1]^3
-        centers = (active_indices.float() + 0.5) * self.h
-        
-        # Compute SDF values and gradients at centers
-        sdf_values = self.trilinear_interpolate(centers, grid)
-        gradients = self.compute_gradient(centers, grid)
-        grad_norms = torch.norm(gradients, dim=1)
-        
         # Coarea loss: Φ_β(-f) * ||∇f||
-        phi_beta = self.laplace_pdf(-sdf_values)
-        loss = (phi_beta * grad_norms).mean()
+        # Note: Φ_β(-f) peaks when f ≈ 0 (at the surface), with value 1/(2β)
+        # This encourages the surface to be smooth and have minimal area
+        phi_beta = self.laplace_pdf(-active_sdf_values)
+        
+        # Clamp gradient norms to avoid numerical issues
+        # For a proper SDF, ||∇f|| should be close to 1
+        active_grad_norms = torch.clamp(active_grad_norms, min=1e-6, max=10.0)
+        
+        # Compute loss
+        # Note: As training progresses and SDF becomes more accurate:
+        # - SDF values near surface approach 0 → Φ_β(-f) increases (peaks at f=0)
+        # - Gradient norms approach 1 (proper SDF) → ||∇f|| increases
+        # This can cause the coarea loss to temporarily increase even as surface area decreases.
+        # The loss should eventually decrease as the surface becomes smoother.
+        loss = (phi_beta * active_grad_norms).mean()
         
         return loss
     
@@ -668,6 +686,14 @@ class VisCoGrids(nn.Module):
         vertices[:, 0] = verts[:, 2]  # x = z
         vertices[:, 1] = verts[:, 1]  # y = y
         vertices[:, 2] = verts[:, 0]  # z = x
+        
+        # Fix triangle orientations to be locally consistent
+        from mesh_utils import fix_triangle_orientations, invert_face_normals
+        faces = fix_triangle_orientations(vertices, faces)
+        
+        # Invert face normals (flip all triangles)
+        # This ensures normals point outward from the surface
+        faces = invert_face_normals(faces)
         
         return vertices, faces
 

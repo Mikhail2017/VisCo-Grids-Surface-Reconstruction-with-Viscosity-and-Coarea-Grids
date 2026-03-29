@@ -262,8 +262,8 @@ VisCoGrids/
 
 ## References
 
-- Paper: [VisCo Grids: Surface Reconstruction with Viscosity and Coarea Grids](https://arxiv.org/abs/2210.15645)
-- Original implementation: (to be published)
+- Paper: [VisCo Grids: Surface Reconstruction with Viscosity and Coarea Grids](https://arxiv.org/abs/2303.14569)
+- Original implementation: (was not published)
 
 ## License
 

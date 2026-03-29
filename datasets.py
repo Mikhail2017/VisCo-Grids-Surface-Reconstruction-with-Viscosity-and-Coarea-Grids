@@ -21,6 +21,49 @@ except ImportError:
     HAS_SKLEARN = False
 
 
+def find_ply_file(directory: str, preferred_names: Optional[List[str]] = None, recursive: bool = False) -> Optional[str]:
+    """
+    Find a PLY file in a directory, trying preferred names first.
+    
+    Args:
+        directory: Directory to search
+        preferred_names: List of preferred filenames to try first
+        recursive: If True, search subdirectories as well
+        
+    Returns:
+        Path to PLY file if found, None otherwise
+    """
+    if preferred_names is None:
+        preferred_names = []
+    
+    # Try preferred names first in the directory
+    for name in preferred_names:
+        path = os.path.join(directory, name)
+        if os.path.exists(path) and name.endswith('.ply'):
+            return path
+    
+    # Search for any PLY file in the directory
+    if os.path.exists(directory):
+        for file in os.listdir(directory):
+            if file.endswith('.ply'):
+                return os.path.join(directory, file)
+        
+        # If recursive, search subdirectories
+        if recursive:
+            for root, dirs, files in os.walk(directory):
+                # Try preferred names in subdirectories
+                for name in preferred_names:
+                    path = os.path.join(root, name)
+                    if os.path.exists(path):
+                        return path
+                # Then any PLY file
+                for file in files:
+                    if file.endswith('.ply'):
+                        return os.path.join(root, file)
+    
+    return None
+
+
 def load_point_cloud_from_ply(filepath: str) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """
     Load point cloud from PLY file.
@@ -108,20 +151,62 @@ def load_stanford_bunny(data_dir: str = "./data") -> Tuple[torch.Tensor, Optiona
     The Stanford Bunny is a classic 3D test model.
     Download from: http://graphics.stanford.edu/data/3Dscanrep/
     
+    The archive structure:
+    - bunny/data/ contains individual scan files (bun000.ply, bun045.ply, etc.)
+    - bunny/reconstruction/ contains merged reconstructions (bun_zipper.ply, etc.)
+    
+    This function prefers reconstruction files as they are the final merged meshes.
+    
     Args:
         data_dir: Directory containing the bunny data
-        
+    
     Returns:
         points: Point cloud of shape (N, 3)
         normals: Optional normals
     """
-    bunny_path = os.path.join(data_dir, "bunny", "bunny.ply")
-    if not os.path.exists(bunny_path):
-        raise FileNotFoundError(
-            f"Stanford Bunny not found at {bunny_path}\n"
-            "Download from: http://graphics.stanford.edu/data/3Dscanrep/"
-        )
-    return load_point_cloud_from_ply(bunny_path)
+    bunny_dir = os.path.join(data_dir, "bunny")
+    
+    # Preferred reconstruction files (final merged meshes)
+    reconstruction_names = [
+        "bun_zipper.ply",      # Main zippered reconstruction
+        "bun_zipper_res4.ply", # Higher resolution
+        "bun_zipper_res3.ply", # Medium resolution
+        "bun_zipper_res2.ply", # Lower resolution
+        "bun_vrip.ply",        # VRIP reconstruction (if available)
+    ]
+    
+    # First, try reconstruction folder (preferred)
+    reconstruction_dir = os.path.join(bunny_dir, "reconstruction")
+    if os.path.exists(reconstruction_dir):
+        bunny_path = find_ply_file(reconstruction_dir, preferred_names=reconstruction_names)
+        if bunny_path:
+            print(f"Loading Stanford Bunny from: {bunny_path}")
+            return load_point_cloud_from_ply(bunny_path)
+    
+    # Try root bunny directory
+    bunny_path = find_ply_file(bunny_dir, preferred_names=reconstruction_names)
+    if bunny_path:
+        print(f"Loading Stanford Bunny from: {bunny_path}")
+        return load_point_cloud_from_ply(bunny_path)
+    
+    # Search recursively (will find files in data/ subdirectory too)
+    bunny_path = find_ply_file(bunny_dir, preferred_names=reconstruction_names, recursive=True)
+    if bunny_path:
+        print(f"Loading Stanford Bunny from: {bunny_path}")
+        return load_point_cloud_from_ply(bunny_path)
+    
+    # If still not found, provide helpful error message
+    raise FileNotFoundError(
+        f"Stanford Bunny PLY file not found in {bunny_dir}\n"
+        f"Expected structure:\n"
+        f"  {bunny_dir}/\n"
+        f"    reconstruction/\n"
+        f"      bun_zipper.ply  (preferred)\n"
+        f"    data/\n"
+        f"      bun000.ply, bun045.ply, ... (individual scans)\n"
+        f"\nDownload from: http://graphics.stanford.edu/data/3Dscanrep/\n"
+        f"Extract bunny.tar.gz to {data_dir}/"
+    )
 
 
 def load_armadillo(data_dir: str = "./data") -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
